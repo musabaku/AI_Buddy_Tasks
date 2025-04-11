@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>AI-Powered Teaching Assistant</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+
+  </head>
+  <body>
+    <h1>Welcome to the AI-Powered Teaching Assistant</h1>
+    <ul>
+      <li><a href="{{ url_for('upload') }}">Upload Document</a></li>
+      <li><a href="{{ url_for('document_query') }}">Ask about Your Document</a></li>
+      <li><a href="{{ url_for('chat') }}">Chat</a></li>
+      <li><a href="{{ url_for('generate') }}">Generate Educational Material</a></li>
+    </ul>
+  </body>
+</html>

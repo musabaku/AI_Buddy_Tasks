@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Document Query</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+  </head>
+  <body>
+    <h1>Ask a Question about the Uploaded Document</h1>
+    <form method="post">
+      <textarea name="user_input" placeholder="Enter your question" required></textarea>
+      <br>
+      <label for="focus">Select Focus Area: </label>
+      <select name="focus">
+        <option value="">General Query</option>
+        <option value="Lesson Plan">Lesson Plan</option>
+        <option value="Timetable">Timetable</option>
+        <option value="Quiz">Quiz</option>
+        <option value="Educational Material">Educational Material</option>
+      </select>
+      <br>
+      <button type="submit">Submit Query</button>
+    </form>
+    {% if response %}
+      <h2>AI Response:</h2>
+      <div class="response-box">
+        {{ response }}
+      </div>
+    {% endif %}
+    <p><a href="{{ url_for('index') }}">Back to Home</a></p>
+  </body>
+</html>

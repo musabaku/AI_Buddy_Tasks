@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Upload Document</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+
+  </head>
+  <body>
+    <h1>Upload a PDF or PowerPoint</h1>
+    <form method="post" enctype="multipart/form-data">
+      <input type="file" name="file" required>
+      <button type="submit">Upload</button>
+    </form>
+    <p><a href="{{ url_for('index') }}">Back to Home</a></p>
+  </body>
+</html>

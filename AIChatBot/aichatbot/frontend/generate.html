@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Generate Educational Material</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+  </head>
+  <body>
+    <h1>Generate Educational Material</h1>
+    
+    <div class="nav-links">
+      <a href="{{ url_for('index') }}">Home</a>
+      <a href="{{ url_for('upload') }}">Upload Document</a>
+      <a href="{{ url_for('document_query') }}">Document Query</a>
+      <a href="{{ url_for('chat') }}">Chat</a>
+    </div>
+
+    <form method="post">
+      <label for="generation_type"><strong>Select Material Type:</strong></label>
+      <select name="generation_type" id="generation_type">
+        <option value="lesson_plan">Lesson Plan</option>
+        <option value="timetable">Timetable</option>
+        <option value="quiz">Quiz</option>
+        <option value="educational_material">Other Educational Material</option>
+      </select>
+
+      <label for="additional_info"><strong>Additional Details (topic, grade level, style, etc.):</strong></label>
+      <textarea id="additional_info" name="additional_info" rows="4" placeholder="e.g. '10th-grade algebra, focus on group activities'"></textarea>
+
+      <button type="submit">Generate</button>
+    </form>
+
+    {% if response %}
+      <h2>Generated Content:</h2>
+      <div class="response-box">
+        {{ response }}
+      </div>
+    {% endif %}
+  </body>
+</html>
