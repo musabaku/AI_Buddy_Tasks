@@ -1,0 +1,409 @@
+import os
+from flask import Flask, render_template, request, redirect, url_for, flash, session, g
+from flask_session import Session
+from werkzeug.utils import secure_filename
+import PyPDF2
+from pptx import Presentation
+import ollama
+import logging
+import sys
+import time # Import time to potentially log duration (simple)
+
+# Configure logging
+# Log to stdout so it appears in your terminal
+logging.basicConfig(level=logging.INFO, stream=sys.stdout,
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+app_logger = logging.getLogger(__name__) # Use __name__ for the logger
+# Optionally set Werkzeug logger level if you want less/more detail from Flask itself
+# logging.getLogger('werkzeug').setLevel(logging.INFO)
+
+
+# Initialize Flask app
+app = Flask(__name__, template_folder='frontend', static_folder='static')
+# IMPORTANT: Change 'your_secret_key' to a real, complex, secret key!
+# Get a good one and set it as an environment variable FLASK_SECRET_KEY
+app.secret_key = os.getenv('FLASK_SECRET_KEY', 'your_secret_key_change_this_in_prod_12345') # Example: os.urandom(24)
+
+# Configure Gemini API (hardcoded key) - Commented out as you are using Ollama
+# genai.configure(api_key="AIzaSyDRmoe4y30uppKWDVgCzjVHejKzhj8wxYI")
+
+
+# Session configuration
+app.config["SESSION_TYPE"] = "filesystem"
+# Use a specific directory for sessions within the app root
+app.config['SESSION_FILE_DIR'] = os.path.join(app.root_path, 'flask_session')
+# Ensure the session directory exists
+os.makedirs(app.config['SESSION_FILE_DIR'], exist_ok=True)
+Session(app)
+
+# Upload configuration
+UPLOAD_FOLDER = os.path.join(app.root_path, 'uploads')
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB limit (adjust if needed)
+ALLOWED_EXTENSIONS = {'pdf', 'ppt', 'pptx'}
+
+# File checking
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+# --- Session Management Helpers ---
+def set_document_text(text):
+    app_logger.info("Session Helper: Setting document text.")
+    session['document_text'] = text
+
+def get_document_text():
+    text = session.get('document_text', '')
+    app_logger.info(f"Session Helper: Retrieving document text. Length: {len(text)} chars.")
+    return text
+
+def clear_document_text():
+    if 'document_text' in session:
+        app_logger.info("Session Helper: Clearing document text.")
+        del session['document_text']
+
+def clear_chat_history():
+     if 'chat_history' in session:
+        app_logger.info("Session Helper: Clearing chat history.")
+        del session['chat_history']
+
+
+# --- Ollama Interaction Functions ---
+
+# Function for simple, stateless generation (used by /document_query, /generate)
+def generate_text(prompt: str) -> str:
+    app_logger.info("generate_text: Entering function.")
+    # app_logger.info(f"generate_text: Prompt (first 200 chars): {prompt[:200]}...") # Log full prompt with care for privacy/size
+
+    start_time = time.time()
+    try:
+        app_logger.info("generate_text: --> Calling ollama.generate...")
+        result = ollama.generate(model='llama3.2', prompt=prompt)
+        end_time = time.time()
+        duration = end_time - start_time
+        app_logger.info(f"generate_text: <-- Received response from ollama.generate (took {duration:.2f} seconds).")
+
+        response_text = result.get('response', '').strip()
+        app_logger.info(f"generate_text: Extracted response (first 200 chars): {response_text[:200]}...")
+        return response_text
+
+    except ollama.ResponseError as e:
+        app_logger.error(f"generate_text: Ollama Response Error: {e.message} (Status Code: {e.status_code})", exc_info=True)
+        if e.status_code == 404:
+             return "Error: Ollama model 'llama3.2' not found. Please pull it (`ollama pull llama3.2`) or check the model name."
+        return f"Ollama Error: {e.message}"
+    except Exception as e:
+        app_logger.error(f"generate_text: An unexpected error occurred during Ollama generation: {e}", exc_info=True)
+        return "Sorry, an unexpected error occurred while generating the response."
+    finally:
+         app_logger.info("generate_text: Exiting function.")
+
+
+# Function for stateful chat generation (used by /chat)
+# Takes user input and the current history, returns the AI response and updated history
+def chat_with_ollama(user_prompt: str, history: list) -> tuple[str, list]:
+    app_logger.info("chat_with_ollama: Entering function.")
+    app_logger.info(f"chat_with_ollama: Current history turns: {len(history)}")
+    # app_logger.info(f"chat_with_ollama: User prompt: '{user_prompt}'") # Log prompt with care
+
+    # Ollama's chat API expects a list of messages
+    messages = list(history) # Create a mutable copy to append to
+
+    # Append the user's message to the list that will be sent to Ollama
+    messages.append({'role': 'user', 'content': user_prompt})
+    app_logger.info("chat_with_ollama: Appended user message to list for API call.")
+
+    start_time = time.time()
+    try:
+        app_logger.info("chat_with_ollama: --> Calling ollama.chat...")
+        # Use ollama.chat for conversational history
+        response = ollama.chat(model='llama3.2', messages=messages)
+        end_time = time.time()
+        duration = end_time - start_time
+        app_logger.info(f"chat_with_ollama: <-- Received response from ollama.chat (took {duration:.2f} seconds).")
+
+
+        # The response from ollama.chat is typically in {'message': {'role': 'assistant', 'content': '...'}}
+        ai_message = response.get('message', {})
+        ai_response_text = ai_message.get('content', '').strip()
+        app_logger.info(f"chat_with_ollama: Extracted AI response (first 200 chars): {ai_response_text[:200]}...")
+
+
+        # Append the AI's response message object to the history list
+        # This history list will be stored in the session for the next turn
+        if ai_message and ai_message.get('role') == 'assistant' and ai_message.get('content') is not None:
+             messages.append(ai_message)
+             app_logger.info("chat_with_ollama: Appended AI message object to chat history.")
+        else:
+             app_logger.warning("chat_with_ollama: Did not receive a valid assistant message to append to history.")
+
+
+        return ai_response_text, messages # Return the text response and the updated history list
+
+    except ollama.ResponseError as e:
+        app_logger.error(f"chat_with_ollama: Ollama Response Error: {e.message} (Status Code: {e.status_code})", exc_info=True)
+        if e.status_code == 404:
+             error_msg = "Error: Ollama model 'llama3.2' not found. Please pull it (`ollama pull llama3.2`) or check the model name."
+        else:
+             error_msg = f"Ollama Chat Error: {e.message}"
+        # Do NOT append the error message to history, as it's not a valid AI response
+        return error_msg, history # Return the error message and the original history on error
+    except Exception as e:
+        app_logger.error(f"chat_with_ollama: An unexpected error occurred during Ollama chat: {e}", exc_info=True)
+        # Do NOT append the error message to history
+        return "Sorry, an unexpected error occurred during chat.", history # Return generic error message and original history
+    finally:
+         app_logger.info("chat_with_ollama: Exiting function.")
+
+
+# --- Flask Routes ---
+
+@app.route('/')
+def index():
+    app_logger.info("Route: Accessed / (index) page.")
+    return render_template('index.html')
+
+@app.route('/upload', methods=['GET', 'POST'])
+def upload():
+    app_logger.info(f"Route: Accessed /upload via {request.method}.")
+    if request.method == 'POST':
+        app_logger.info("Route: Processing /upload POST request.")
+        # Clear previous document and chat history on new upload
+        clear_document_text()
+        clear_chat_history()
+        app_logger.info("Route: Cleared previous document text and chat history for new upload.")
+
+        file = request.files.get('file')
+        if not file or file.filename == '':
+            app_logger.warning("Route: No file selected for upload.")
+            flash("Please select a file to upload.", 'warning')
+            app_logger.info("Route: Redirecting back to upload page.")
+            return redirect(request.url)
+
+        if not allowed_file(file.filename):
+            app_logger.warning(f"Route: Unsupported file type uploaded: {file.filename}")
+            flash("Unsupported file type. Please upload a PDF or PPT/PPTX.", 'danger')
+            app_logger.info("Route: Redirecting back to upload page.")
+            return redirect(request.url)
+
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        app_logger.info(f"Route: Saving file to: {filepath}")
+        try:
+            file.save(filepath)
+            app_logger.info("Route: File saved successfully.")
+        except Exception as e:
+             app_logger.error(f"Route: Error saving file: {e}", exc_info=True)
+             flash(f"Error saving file: {e}", 'danger')
+             app_logger.info("Route: Redirecting back to upload page after save error.")
+             # Consider cleaning up partially saved file if necessary
+             return redirect(request.url)
+
+
+        # Extract text
+        app_logger.info("Route: Starting text extraction process.")
+        text = ''
+        try:
+            if filename.lower().endswith('.pdf'):
+                app_logger.info("Route: Processing PDF file.")
+                with open(filepath, 'rb') as f:
+                    reader = PyPDF2.PdfReader(f)
+                    total_pages = len(reader.pages)
+                    app_logger.info(f"Route: Total PDF pages: {total_pages}")
+                    for i, page in enumerate(reader.pages):
+                         app_logger.info(f"Route: Extracting text from PDF page {i+1}/{total_pages}.")
+                         try:
+                             page_text = page.extract_text()
+                             text += page_text or '' # Add text, use empty string if None
+                         except Exception as page_e:
+                              app_logger.warning(f"Route: Error extracting text from PDF page {i+1}: {page_e}")
+                              # Continue to the next page even if one fails
+                app_logger.info("Route: PDF processing complete.")
+            else: # ppt or pptx
+                app_logger.info("Route: Processing PPT/PPTX file.")
+                prs = Presentation(filepath)
+                total_slides = len(prs.slides)
+                app_logger.info(f"Route: Total slides: {total_slides}")
+                for slide_idx, slide in enumerate(prs.slides):
+                     app_logger.info(f"Route: Extracting text from slide {slide_idx+1}/{total_slides}.")
+                     for shape_idx, shape in enumerate(slide.shapes):
+                        if hasattr(shape, 'text'):
+                             # app_logger.info(f"Route: Extracting text from shape {shape_idx+1} on slide {slide_idx+1}.") # Too verbose?
+                             try:
+                                 text += shape.text + '\n'
+                             except Exception as shape_e:
+                                 app_logger.warning(f"Route: Error extracting text from shape {shape_idx+1} on slide {slide_idx+1}: {shape_e}")
+                                 # Continue to next shape
+                app_logger.info("Route: PPT/PPTX processing complete.")
+
+            set_document_text(text)
+            app_logger.info(f"Route: Text extraction finished. Total chars extracted: {len(text)}")
+            flash("File uploaded and processed successfully! You can now query the document.", 'success')
+            app_logger.info("Route: Redirecting to document_query page.")
+            # Consider cleaning up the uploaded file if you don't need it after extraction
+            # os.remove(filepath)
+            return redirect(url_for('document_query'))
+
+        except Exception as e:
+            app_logger.error(f"Route: Error processing file {filename}: {e}", exc_info=True)
+            flash(f"Error processing file: {e}", 'danger')
+             # Consider deleting the failed upload file here if you want
+            # os.remove(filepath)
+            app_logger.info("Route: Redirecting back to upload page after processing error.")
+            return redirect(request.url)
+
+    # Handle GET request for upload page
+    app_logger.info("Route: Rendering upload.html.")
+    return render_template('upload.html')
+
+@app.route('/document_query', methods=['GET', 'POST'])
+def document_query():
+    app_logger.info(f"Route: Accessed /document_query via {request.method}.")
+    ai_response = None
+    document_text = get_document_text() # Get text regardless of method for preview
+
+    if request.method == 'POST':
+        app_logger.info("Route: Processing /document_query POST request.")
+        user_input = request.form.get('user_input')
+        focus = request.form.get('focus')
+        app_logger.info(f"Route: User input: '{user_input}', Focus: '{focus}'")
+
+        if not document_text:
+            app_logger.warning("Route: Document query submitted but no document text found in session.")
+            flash("No document available. Please upload first.", 'warning')
+            app_logger.info("Route: Redirecting to upload page.")
+            return redirect(url_for('upload'))
+
+        # --- Prompt Construction ---
+        # WARNING: This approach sends the entire document text to the LLM on every query.
+        # This will fail for large documents due to context window limitations.
+        # For large documents, consider implementing RAG (Retrieval Augmented Generation).
+        prompt = f"Using the following document content:\n---\n{document_text}\n---\n\n"
+        if focus:
+            prompt += f"Generate a {focus.lower()} based on the document content for: {user_input}\n"
+        else:
+            # Default to answering based *only* on the document unless a specific task (focus) is given
+            prompt += f"Answer the following question based *only* on the document content: {user_input}\n"
+
+        app_logger.info("Route: Calling generate_text for document query.")
+        ai_response = generate_text(prompt)
+        app_logger.info("Route: generate_text call finished for document query.")
+        # app_logger.info(f"Route: AI Response (first 200 chars): {ai_response[:200]}...") # Log response snippet
+
+    # For GET or after POST, render the template
+    app_logger.info("Route: Rendering document_query.html.")
+    return render_template('document_query.html',
+                           response=ai_response, # Latest AI response text
+                           document_loaded=bool(document_text), # Boolean flag for template logic
+                           document_preview=document_text[:1000] + '...' if len(document_text) > 1000 else document_text # Pass a preview
+                          )
+
+
+@app.route('/chat', methods=['GET', 'POST'])
+def chat():
+    app_logger.info(f"Route: Accessed /chat via {request.method}.")
+
+    # Get or initialize chat history from session
+    # History format: [{'role': 'user', 'content': '...'}, {'role': 'assistant', 'content': '...'}]
+    chat_history = session.get('chat_history', [])
+    app_logger.info(f"Route: Loaded chat history from session. Turns: {len(chat_history)}")
+
+    ai_response_text = None # Will store the AI's latest response text for potential display
+
+    if request.method == 'POST':
+        app_logger.info("Route: Processing /chat POST request.")
+        user_input = request.form.get('user_input')
+        app_logger.info(f"Route: User chat input: '{user_input}'")
+
+        if not user_input:
+             flash("Please enter a message to chat.", 'warning')
+             app_logger.warning("Route: Empty user input received for chat.")
+             # Render the template with existing history
+             return render_template('chat.html', chat_history=chat_history, response=ai_response_text)
+
+        document_text = get_document_text() # Get doc text for potential initial context
+
+        # --- Conversation History Management ---
+        # Add document context as a system message ONLY at the start of the conversation
+        # if history is empty AND document text exists
+        # Create a *temporary* message list for the current API call
+        messages_for_ollama = list(chat_history) # Start with current history
+
+        if not chat_history and document_text:
+            app_logger.info("Route: Adding document context as initial system message to chat history for this turn.")
+            # Add system message *before* the first user message in the list sent to Ollama
+            messages_for_ollama.insert(0, {'role': 'system', 'content': f"Context from document:\n---\n{document_text}\n---"})
+            # Note: This system message is *not* automatically added to the session's chat_history list
+            # because it's instruction for the model, not part of the human/assistant conversation flow.
+            # If you want it visible in the UI history, you'd need to add it there separately.
+
+        # Now add the current user message to the list for the API call
+        messages_for_ollama.append({'role': 'user', 'content': user_input})
+        app_logger.info("Route: Appended current user message to messages list for API call.")
+
+
+        # Call the chat function with the list of messages for this turn
+        # chat_with_ollama expects the user_prompt separately and appends it internally
+        # It also appends the AI response internally before returning the updated list
+        ai_response_text, updated_history = chat_with_ollama(user_input, chat_history) # Pass user input and the *session's* history
+
+
+        # Update the session history with the new messages (user + AI) returned by chat_with_ollama
+        session['chat_history'] = updated_history
+        app_logger.info(f"Route: Updated chat history in session. New total turns: {len(updated_history)}")
+
+    # For GET request or after POST, render the template
+    app_logger.info("Route: Rendering chat.html.")
+    # Pass the entire chat history to the template for display
+    # The template (`chat.html`) needs to loop through `chat_history`
+    # You might also pass `ai_response_text` separately if you want to highlight the latest response
+    return render_template('chat.html', chat_history=chat_history, response=ai_response_text)
+
+@app.route('/generate', methods=['GET', 'POST'])
+def generate():
+    app_logger.info(f"Route: Accessed /generate via {request.method}.")
+    ai_response = None
+    if request.method == 'POST':
+        app_logger.info("Route: Processing /generate POST request.")
+        gen_type = request.form.get('generation_type')
+        info = request.form.get('additional_info')
+        app_logger.info(f"Route: Generation type: '{gen_type}', Info: '{info}'")
+
+        prompts = {
+            'lesson_plan': "Create a detailed lesson plan including objectives, activities, and assessments.",
+            'timetable': "Generate a school day timetable with classes, breaks, and activities.",
+            'quiz': "Design a varied quiz (MCQ, short answers, true/false).",
+            'educational_material': "Develop creative educational materials with interactive elements."
+        }
+
+        base_prompt = prompts.get(gen_type, "Generate content.") # Default prompt if type is missing
+        prompt = f"{base_prompt} Based on this information: {info}"
+
+        app_logger.info("Route: Calling generate_text for general generation.")
+        ai_response = generate_text(prompt)
+        app_logger.info("Route: generate_text call finished for general generation.")
+        # app_logger.info(f"Route: AI Response (first 200 chars): {ai_response[:200]}...") # Log response snippet
+
+
+    app_logger.info("Route: Rendering generate.html.")
+    return render_template('generate.html', response=ai_response)
+
+# Optional: Add a route to clear the session (useful for testing)
+@app.route('/clear_session')
+def clear_session_route():
+    session.clear()
+    flash("Session cleared!", 'info')
+    app_logger.info("Route: Session explicitly cleared via /clear_session route.")
+    return redirect(url_for('index'))
+
+
+if __name__ == '__main__':
+    app_logger.info("--- Flask application starting ---")
+    # Set a default log level for Werkzeug (Flask's internal server) if you want
+    # logging.getLogger('werkzeug').setLevel(logging.INFO)
+    try:
+        app.run(debug=True, port=5000) # Added port for clarity, default is 5000
+    except Exception as e:
+        app_logger.critical(f"--- Flask application failed to start: {e} ---", exc_info=True)
+
+    app_logger.info("--- Flask application stopped ---")
