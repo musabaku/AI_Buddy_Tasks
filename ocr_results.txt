@@ -1,0 +1,64 @@
+OCR Results Log - Started: Sat Apr 26 12:25:18 2025
+------------------------------------------------------------
+File: images\WhatsApp Image 2025-04-22 at 3.07.51 PM (1).jpeg
+Overall Status: completed
+Preprocessing Status: succeeded
+OCR Status: OperationStatusCodes.succeeded
+Detected Numbers:
+  Text: 1, Confidence: 1.00
+  Text: 1, Confidence: 1.00
+  Text: ١, Confidence: 1.00
+All OCR Lines (for reference):
+------------------------------
+File: images\WhatsApp Image 2025-04-22 at 3.07.51 PM (1)_preprocessed_minimal.png
+Overall Status: completed
+Preprocessing Status: succeeded
+OCR Status: OperationStatusCodes.succeeded
+Detected Numbers:
+  Text: 1, Confidence: 1.00
+  Text: 1, Confidence: 1.00
+  Text: ١, Confidence: 1.00
+All OCR Lines (for reference):
+------------------------------
+File: images\WhatsApp Image 2025-04-22 at 3.07.51 PM (1)_preprocessed_minimal_preprocessed_minimal.png
+Overall Status: completed
+Preprocessing Status: succeeded
+OCR Status: OperationStatusCodes.succeeded
+Detected Numbers:
+  Text: 1, Confidence: 1.00
+  Text: 1, Confidence: 1.00
+  Text: ١, Confidence: 1.00
+All OCR Lines (for reference):
+------------------------------
+File: images\WhatsApp Image 2025-04-22 at 3.07.51 PM (1)_preprocessed_minimal_preprocessed_minimal_preprocessed_minimal.png
+Overall Status: completed
+Preprocessing Status: succeeded
+OCR Status: OperationStatusCodes.succeeded
+Detected Numbers:
+  Text: 1, Confidence: 1.00
+  Text: 1, Confidence: 1.00
+  Text: ١, Confidence: 1.00
+All OCR Lines (for reference):
+------------------------------
+File: images\WhatsApp Image 2025-04-22 at 3.07.51 PM.jpeg
+Overall Status: completed
+Preprocessing Status: succeeded
+OCR Status: OperationStatusCodes.succeeded
+Detected Numbers:
+  Text: 1, Confidence: 1.00
+  Text: 1, Confidence: 1.00
+  Text: 1, Confidence: 1.00
+  Text: 1, Confidence: 1.00
+All OCR Lines (for reference):
+------------------------------
+File: images\WhatsApp Image 2025-04-22 at 3.07.51 PM_preprocessed_minimal.png
+Overall Status: completed
+Preprocessing Status: succeeded
+OCR Status: OperationStatusCodes.succeeded
+Detected Numbers:
+  Text: 1, Confidence: 1.00
+  Text: 1, Confidence: 1.00
+  Text: 1, Confidence: 1.00
+  Text: ٠٠, Confidence: 1.00
+All OCR Lines (for reference):
+------------------------------
